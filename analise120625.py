@@ -23,7 +23,7 @@ except ImportError as e:
 # Configurações do Google Sheets
 SHEET_ID = "1qRAOnH7bKsUEYr9zHGznP_6NflusS-IHbDBSlDgu0I8"
 SHEET_NAME = "Dados"
-CREDENTIALS_PATH = r"C:\Users\glebr\Downloads\bustling-day-459711-q8-e889589cda14.json"
+CREDENTIALS_PATH = None  # Não usado no Streamlit Cloud
 
 # Configuração da página
 st.set_page_config(layout="wide", page_title="Análise Comercial")
@@ -191,8 +191,23 @@ def botao_download_csv_tabela(df, nome_arquivo):
 def carregar_dados():
     """Carrega dados da planilha Google Sheets"""
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-        creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=scopes)
+        # SEMPRE tentar usar secrets primeiro (para Streamlit Cloud)
+        if hasattr(st, 'secrets') and "gcp_service_account" in st.secrets:
+            # Usando secrets do Streamlit Cloud
+            st.info("🔐 Usando credenciais do Streamlit Secrets")
+            credentials_info = dict(st.secrets["gcp_service_account"])
+            scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+            creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
+        else:
+            # Se não há secrets, mostrar erro claro
+            st.error("❌ Secrets não configurados no Streamlit Cloud")
+            st.error("💡 **Configure os secrets seguindo as instruções:**")
+            st.error("1. Vá em Manage app → Settings → Secrets")
+            st.error("2. Cole a configuração fornecida")
+            st.error("3. Salve e aguarde o restart")
+            return pd.DataFrame()
+        
+        # Conectar ao Google Sheets
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SHEET_ID)
         worksheet = spreadsheet.worksheet(SHEET_NAME)
@@ -222,11 +237,17 @@ def carregar_dados():
             df = df[df['Ponto de Venda'].notna()]
             df = df[df['Ponto de Venda'] != '']
             df = df[df['Ponto de Venda'] != 'nan']
-            
+        
+        st.success(f"✅ Dados carregados com sucesso! {len(df)} registros encontrados.")
         return df
         
     except Exception as e:
         st.error(f"Erro ao carregar dados: {str(e)}")
+        st.error("💡 **Possíveis soluções:**")
+        st.error("1. Verifique se os secrets estão configurados corretamente")
+        st.error("2. Certifique-se que a planilha está compartilhada com:")
+        st.error("   analista-nat-luckreceptivo-702@bustling-day-459711-q8.iam.gserviceaccount.com")
+        st.error("3. Verifique se o ID da planilha e nome da aba estão corretos")
         return pd.DataFrame()
 
 def aplicar_filtro_pontos_venda(df, pontos_selecionados):
@@ -875,7 +896,7 @@ def main():
                     
                     col_pdf, col_csv = st.columns(2)
                     with col_pdf:
-                        botao_download_pdf_tabela(df_display, f"Metas - {periodo1_label}", f"metas_{ano_p1}{mes_p1_selected}")
+                                                botao_download_pdf_tabela(df_display, f"Metas - {periodo1_label}", f"metas_{ano_p1}{mes_p1_selected}")
                     with col_csv:
                         botao_download_csv_tabela(df_display, f"metas_{ano_p1}{mes_p1_selected}")
                 
