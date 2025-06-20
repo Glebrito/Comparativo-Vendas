@@ -7,6 +7,8 @@ import plotly.graph_objects as go
 from datetime import datetime
 import io
 import base64
+import os
+import numpy as np
 
 # Importações condicionais para PDF
 try:
@@ -17,13 +19,12 @@ try:
     from reportlab.lib import colors
     PDF_TABELA_DISPONIVEL = True
 except ImportError as e:
-    st.warning(f"⚠️ PDF de tabelas não disponível. Instale: pip install reportlab")
     PDF_TABELA_DISPONIVEL = False
 
 # Configurações do Google Sheets
 SHEET_ID = "1qRAOnH7bKsUEYr9zHGznP_6NflusS-IHbDBSlDgu0I8"
 SHEET_NAME = "Dados"
-CREDENTIALS_PATH = None  # Não usado no Streamlit Cloud
+CREDENTIALS_PATH = "C://Users/glebr/Downloads/bustling-day-459711-q8-e889589cda14.json"  # Caminho para o arquivo de credenciais local
 
 # Configuração da página
 st.set_page_config(layout="wide", page_title="Análise Comercial")
@@ -187,24 +188,63 @@ def botao_download_csv_tabela(df, nome_arquivo):
         key=f"csv_{nome_arquivo}_{hash(str(df.values.tolist()))}"
     )
 
+def gerar_dados_exemplo():
+    """Gera dados de exemplo para desenvolvimento"""
+    # Criar DataFrame base
+    pontos_venda = ['Loja A', 'Loja B', 'Loja C', 'Loja D', 'Loja E', 
+                    'Loja F', 'Loja G', 'Loja H', 'Loja I', 'Loja J']
+    
+    dados_exemplo = []
+    anos = [2024, 2025]
+    meses = obter_ordem_meses()
+    
+    # Gerar dados para cada combinação de ano, mês e ponto de venda
+    for ano in anos:
+        for mes in meses:
+            for ponto in pontos_venda:
+                # Gerar valores aleatórios com alguma lógica
+                base_venda = np.random.randint(10000, 50000)
+                # Variação sazonal - vendas maiores no fim do ano
+                fator_sazonal = 1.0 + (obter_indice_mes(mes) / 12) * 0.5
+                # Crescimento anual
+                fator_anual = 1.0 + (ano - 2024) * 0.15
+                
+                venda = base_venda * fator_sazonal * fator_anual
+                # Metas um pouco acima das vendas em média
+                meta = venda * np.random.uniform(0.9, 1.3)
+                
+                dados_exemplo.append({
+                    'Ponto de Venda': ponto,
+                    'Ano': ano,
+                    'Mês': mes,
+                    'Venda': round(venda, 2),
+                    'Metas': round(meta, 2)
+                })
+    
+    return pd.DataFrame(dados_exemplo)
+
+# Função para carregar dados reais do Google Sheets
 @st.cache_data(ttl=600)
-def carregar_dados():
+def carregar_dados_google_sheets():
     """Carrega dados da planilha Google Sheets"""
     try:
-        # SEMPRE tentar usar secrets primeiro (para Streamlit Cloud)
-        if hasattr(st, 'secrets') and "gcp_service_account" in st.secrets:
-            # Usando secrets do Streamlit Cloud
+        # Tentar usar arquivo de credenciais local
+        if os.path.exists(CREDENTIALS_PATH):
+            st.info(f"🔐 Usando arquivo de credenciais local: {CREDENTIALS_PATH}")
+            scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+            creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=scopes)
+        # Tentar usar secrets do Streamlit
+        elif hasattr(st, 'secrets') and "gcp_service_account" in st.secrets:
             st.info("🔐 Usando credenciais do Streamlit Secrets")
             credentials_info = dict(st.secrets["gcp_service_account"])
             scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
             creds = Credentials.from_service_account_info(credentials_info, scopes=scopes)
         else:
-            # Se não há secrets, mostrar erro claro
-            st.error("❌ Secrets não configurados no Streamlit Cloud")
-            st.error("💡 **Configure os secrets seguindo as instruções:**")
-            st.error("1. Vá em Manage app → Settings → Secrets")
-            st.error("2. Cole a configuração fornecida")
-            st.error("3. Salve e aguarde o restart")
+            # Se não há credenciais, mostrar erro
+            st.error("❌ Credenciais não encontradas")
+            st.error("💡 **Configure as credenciais seguindo uma das opções:**")
+            st.error(f"1. Crie um arquivo de credenciais em: {CREDENTIALS_PATH}")
+            st.error("2. Configure secrets no Streamlit Cloud")
             return pd.DataFrame()
         
         # Conectar ao Google Sheets
@@ -238,15 +278,13 @@ def carregar_dados():
             df = df[df['Ponto de Venda'] != '']
             df = df[df['Ponto de Venda'] != 'nan']
         
-        st.success(f"✅ Dados carregados com sucesso! {len(df)} registros encontrados.")
         return df
         
     except Exception as e:
         st.error(f"Erro ao carregar dados: {str(e)}")
         st.error("💡 **Possíveis soluções:**")
-        st.error("1. Verifique se os secrets estão configurados corretamente")
-        st.error("2. Certifique-se que a planilha está compartilhada com:")
-        st.error("   analista-nat-luckreceptivo-702@bustling-day-459711-q8.iam.gserviceaccount.com")
+        st.error(f"1. Verifique se o arquivo de credenciais existe em: {CREDENTIALS_PATH}")
+        st.error("2. Certifique-se que a planilha está compartilhada com o email da conta de serviço")
         st.error("3. Verifique se o ID da planilha e nome da aba estão corretos")
         return pd.DataFrame()
 
@@ -661,7 +699,23 @@ def main():
     else:
         st.warning("⚠️ Para habilitar PDF de tabelas, execute: pip install reportlab")
     
-    df_base = carregar_dados()
+    # IMPORTANTE: Movemos o checkbox para fora da função cacheada
+    st.sidebar.header("🔧 Configurações")
+    usar_dados_exemplo = st.sidebar.checkbox(
+        "Usar dados de exemplo", 
+        value=False,
+        help="Ative para usar dados fictícios em vez de conectar ao Google Sheets"
+    )
+    
+    # Carregar dados com base na escolha do usuário
+    if usar_dados_exemplo:
+        st.info("🔄 Usando dados de exemplo para desenvolvimento")
+        df_base = gerar_dados_exemplo()
+        st.success(f"✅ Dados de exemplo carregados! {len(df_base)} registros gerados.")
+    else:
+        df_base = carregar_dados_google_sheets()
+        if not df_base.empty:
+            st.success(f"✅ Dados carregados com sucesso! {len(df_base)} registros encontrados.")
     
     if df_base.empty:
         st.error("❌ Não foi possível carregar os dados.")
@@ -760,46 +814,226 @@ def main():
             modo_soma = st.checkbox("🔄 Modo Soma (somar todos os meses do período inicial até o final)", value=False)
             
             if modo_soma:
-                st.info(f"📊 **Modo Soma**: Somando todos os meses de {periodo1_label} até {periodo2_label} por ponto de venda")
+                # NOVA IMPLEMENTAÇÃO: Checkbox para escolher entre análise de 1 ou 2 períodos de soma
+                comparar_dois_periodos_soma = st.checkbox("📊 Comparar dois períodos de soma", value=False)
                 
-                # Processamento do período completo
-                df_soma_completa = processar_soma_periodo_completo(df_base, ano_p1, mes_p1_selected, ano_p2, mes_p2_selected, pontos_selecionados)
+                if comparar_dois_periodos_soma:
+                    # Modo de comparação entre dois períodos de soma
+                    st.info("📈 **Modo Soma Comparativo**: Comparando dois períodos de soma")
+                    
+                    # Definir os períodos de soma
+                    col1_soma, col2_soma = st.columns(2)
+                    
+                    with col1_soma:
+                        st.subheader("Primeiro Período de Soma")
+                        # Seleção do período inicial da primeira soma
+                        col_inicio_p1, col_fim_p1 = st.columns(2)
+                        with col_inicio_p1:
+                            ano_inicio_p1 = int(st.selectbox(
+                                "Ano Inicial", 
+                                options=sorted(df_base["Ano"].unique()),
+                                key="ano_inicio_p1"
+                            ))
+                            meses_inicio_p1 = sorted(df_base[df_base["Ano"] == ano_inicio_p1]["Mês"].str.strip().unique(), 
+                                                 key=lambda x: obter_indice_mes(x))
+                            mes_inicio_p1 = str(st.selectbox(
+                                "Mês Inicial", 
+                                options=meses_inicio_p1,
+                                key="mes_inicio_p1"
+                            ))
+                        
+                        with col_fim_p1:
+                            anos_fim_p1 = [a for a in sorted(df_base["Ano"].unique()) if a >= ano_inicio_p1]
+                            ano_fim_p1 = int(st.selectbox(
+                                "Ano Final", 
+                                options=anos_fim_p1,
+                                key="ano_fim_p1"
+                            ))
+                            
+                            # Filtrar meses disponíveis para o ano final
+                            meses_fim_p1 = sorted(df_base[df_base["Ano"] == ano_fim_p1]["Mês"].str.strip().unique(),
+                                               key=lambda x: obter_indice_mes(x))
+                            
+                            # Se mesmo ano, filtrar meses após o mês inicial
+                            if ano_fim_p1 == ano_inicio_p1:
+                                idx_mes_inicio = obter_indice_mes(mes_inicio_p1)
+                                meses_fim_p1 = [m for m in meses_fim_p1 if obter_indice_mes(m) >= idx_mes_inicio]
+                            
+                            mes_fim_p1 = str(st.selectbox(
+                                "Mês Final", 
+                                options=meses_fim_p1,
+                                key="mes_fim_p1"
+                            ))
+                    
+                    with col2_soma:
+                        st.subheader("Segundo Período de Soma")
+                        # Seleção do período inicial da segunda soma
+                        col_inicio_p2, col_fim_p2 = st.columns(2)
+                        with col_inicio_p2:
+                            ano_inicio_p2 = int(st.selectbox(
+                                "Ano Inicial", 
+                                options=sorted(df_base["Ano"].unique()),
+                                key="ano_inicio_p2"
+                            ))
+                            meses_inicio_p2 = sorted(df_base[df_base["Ano"] == ano_inicio_p2]["Mês"].str.strip().unique(), 
+                                                 key=lambda x: obter_indice_mes(x))
+                            mes_inicio_p2 = str(st.selectbox(
+                                "Mês Inicial", 
+                                options=meses_inicio_p2,
+                                key="mes_inicio_p2"
+                            ))
+                        
+                        with col_fim_p2:
+                            anos_fim_p2 = [a for a in sorted(df_base["Ano"].unique()) if a >= ano_inicio_p2]
+                            ano_fim_p2 = int(st.selectbox(
+                                "Ano Final", 
+                                options=anos_fim_p2,
+                                key="ano_fim_p2"
+                            ))
+                            
+                            # Filtrar meses disponíveis para o ano final
+                            meses_fim_p2 = sorted(df_base[df_base["Ano"] == ano_fim_p2]["Mês"].str.strip().unique(),
+                                               key=lambda x: obter_indice_mes(x))
+                            
+                            # Se mesmo ano, filtrar meses após o mês inicial
+                            if ano_fim_p2 == ano_inicio_p2:
+                                idx_mes_inicio = obter_indice_mes(mes_inicio_p2)
+                                meses_fim_p2 = [m for m in meses_fim_p2 if obter_indice_mes(m) >= idx_mes_inicio]
+                            
+                            mes_fim_p2 = str(st.selectbox(
+                                "Mês Final", 
+                                options=meses_fim_p2,
+                                key="mes_fim_p2"
+                            ))
+                    
+                    # Processamento dos dois períodos de soma
+                    df_soma_p1 = processar_soma_periodo_completo(df_base, ano_inicio_p1, mes_inicio_p1, ano_fim_p1, mes_fim_p1, pontos_selecionados)
+                    df_soma_p2 = processar_soma_periodo_completo(df_base, ano_inicio_p2, mes_inicio_p2, ano_fim_p2, mes_fim_p2, pontos_selecionados)
+                    
+                    # Labels para os períodos de soma
+                    periodo_soma_p1_label = f"{mes_inicio_p1}/{ano_inicio_p1} até {mes_fim_p1}/{ano_fim_p1}"
+                    periodo_soma_p2_label = f"{mes_inicio_p2}/{ano_inicio_p2} até {mes_fim_p2}/{ano_fim_p2}"
+                    
+                    if not df_soma_p1.empty and not df_soma_p2.empty:
+                        # Exibir resultados dos dois períodos de soma
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.subheader(f"🔄 Soma do Período 1 ({periodo_soma_p1_label})")
+                            df_soma_p1_display = df_soma_p1[['Ponto de Venda', 'Venda_Formatada', 'Metas_Formatada', 'Alcance_Formatado', 'Meta Batida']].copy()
+                            df_soma_p1_display.columns = ['Ponto de Venda', 'Vendas Totais', 'Metas Totais', 'Alcance', 'Status']
+                            st.dataframe(df_soma_p1_display, use_container_width=True)
+                            
+                            col_pdf, col_csv = st.columns(2)
+                            with col_pdf:
+                                botao_download_pdf_tabela(df_soma_p1_display, f"Soma - {periodo_soma_p1_label}", f"soma_p1_{ano_inicio_p1}{mes_inicio_p1}_{ano_fim_p1}{mes_fim_p1}")
+                            with col_csv:
+                                botao_download_csv_tabela(df_soma_p1_display, f"soma_p1_{ano_inicio_p1}{mes_inicio_p1}_{ano_fim_p1}{mes_fim_p1}")
+                            
+                            # Totais do período 1
+                            total_vendas_p1 = df_soma_p1['Venda'].sum()
+                            total_metas_p1 = df_soma_p1['Metas'].sum()
+                            alcance_p1 = (total_vendas_p1 / total_metas_p1 * 100) if total_metas_p1 > 0 else 0
+                            st.metric("Total Vendas", formatar_real(total_vendas_p1))
+                            st.metric("Total Metas", formatar_real(total_metas_p1))
+                            st.metric("Alcance Geral", formatar_porcentagem(alcance_p1))
+                        
+                        with col2:
+                            st.subheader(f"🔄 Soma do Período 2 ({periodo_soma_p2_label})")
+                            df_soma_p2_display = df_soma_p2[['Ponto de Venda', 'Venda_Formatada', 'Metas_Formatada', 'Alcance_Formatado', 'Meta Batida']].copy()
+                            df_soma_p2_display.columns = ['Ponto de Venda', 'Vendas Totais', 'Metas Totais', 'Alcance', 'Status']
+                            st.dataframe(df_soma_p2_display, use_container_width=True)
+                            
+                            col_pdf, col_csv = st.columns(2)
+                            with col_pdf:
+                                botao_download_pdf_tabela(df_soma_p2_display, f"Soma - {periodo_soma_p2_label}", f"soma_p2_{ano_inicio_p2}{mes_inicio_p2}_{ano_fim_p2}{mes_fim_p2}")
+                            with col_csv:
+                                botao_download_csv_tabela(df_soma_p2_display, f"soma_p2_{ano_inicio_p2}{mes_inicio_p2}_{ano_fim_p2}{mes_fim_p2}")
+                            
+                            # Totais do período 2
+                            total_vendas_p2 = df_soma_p2['Venda'].sum()
+                            total_metas_p2 = df_soma_p2['Metas'].sum()
+                            alcance_p2 = (total_vendas_p2 / total_metas_p2 * 100) if total_metas_p2 > 0 else 0
+                            evolucao = ((total_vendas_p2 / total_vendas_p1 - 1) * 100) if total_vendas_p1 > 0 else 0
+                            st.metric("Total Vendas", formatar_real(total_vendas_p2))
+                            st.metric("Total Metas", formatar_real(total_metas_p2))
+                            st.metric("Alcance Geral", formatar_porcentagem(alcance_p2))
+                            st.metric("Evolução", formatar_porcentagem(evolucao), 
+                                     delta="📈 Cresceu" if evolucao > 0 else "📉 Diminuiu" if evolucao < 0 else "➡️ Manteve")
+                        
+                        # Criar comparativo entre os dois períodos de soma
+                        comparativo_soma = criar_comparativo_vendas(df_soma_p1, df_soma_p2)
+                        
+                        st.subheader("📈 Comparativo entre Períodos de Soma")
+                        col_comp, col_botoes_comp = st.columns([3, 1])
+                        with col_comp:
+                            df_comp_display = comparativo_soma[['Ponto de Venda', 'Venda_p1', 'Venda_p2', 'Variação_Formatada']].copy()
+                            df_comp_display['Venda_p1'] = df_comp_display['Venda_p1'].apply(formatar_real)
+                            df_comp_display['Venda_p2'] = df_comp_display['Venda_p2'].apply(formatar_real)
+                            df_comp_display.columns = ['Ponto de Venda', f'Soma {periodo_soma_p1_label}', f'Soma {periodo_soma_p2_label}', 'Variação']
+                            st.dataframe(df_comp_display, use_container_width=True)
+                        with col_botoes_comp:
+                            botao_download_pdf_tabela(df_comp_display, f"Comparativo Somas - {periodo_soma_p1_label} vs {periodo_soma_p2_label}", 
+                                                    f"comp_somas_{ano_inicio_p1}{mes_inicio_p1}_{ano_fim_p2}{mes_fim_p2}")
+                            botao_download_csv_tabela(df_comp_display, f"comp_somas_{ano_inicio_p1}{mes_inicio_p1}_{ano_fim_p2}{mes_fim_p2}")
+                        
+                        # Gráficos comparativos
+                        fig_comparacao = criar_grafico_vendas_comparacao(comparativo_soma, 
+                                                                        f"Soma {periodo_soma_p1_label}", 
+                                                                        f"Soma {periodo_soma_p2_label}")
+                        st.plotly_chart(fig_comparacao, use_container_width=True)
+                        
+                        # Gráfico de crescimento
+                        fig_crescimento = criar_grafico_crescimento(df_soma_p1, df_soma_p2, 
+                                                                  f"Soma {periodo_soma_p1_label}", 
+                                                                  f"Soma {periodo_soma_p2_label}")
+                        st.plotly_chart(fig_crescimento, use_container_width=True)
+                    else:
+                        st.warning("⚠️ Nenhum dado encontrado para um ou ambos os períodos selecionados.")
                 
-                if not df_soma_completa.empty:
-                    st.subheader(f"🔄 Soma Completa do Período ({periodo1_label} até {periodo2_label})")
-                    
-                    # Tabela da soma completa
-                    col_tabela, col_botoes = st.columns([3, 1])
-                    with col_tabela:
-                        df_soma_display = df_soma_completa[['Ponto de Venda', 'Venda_Formatada', 'Metas_Formatada', 'Alcance_Formatado', 'Meta Batida']].copy()
-                        df_soma_display.columns = ['Ponto de Venda', 'Vendas Totais', 'Metas Totais', 'Alcance', 'Status']
-                        st.dataframe(df_soma_display, use_container_width=True)
-                    
-                    with col_botoes:
-                        botao_download_pdf_tabela(df_soma_display, f"Soma Completa - {periodo1_label} até {periodo2_label}", f"soma_completa_{ano_p1}{mes_p1_selected}_{ano_p2}{mes_p2_selected}")
-                        botao_download_csv_tabela(df_soma_display, f"soma_completa_{ano_p1}{mes_p1_selected}_{ano_p2}{mes_p2_selected}")
-                    
-                    # Totais da soma completa
-                    total_vendas_soma = df_soma_completa['Venda'].sum()
-                    total_metas_soma = df_soma_completa['Metas'].sum()
-                    alcance_soma = (total_vendas_soma / total_metas_soma * 100) if total_metas_soma > 0 else 0
-                    
-                    col1_total, col2_total, col3_total = st.columns(3)
-                    with col1_total:
-                        st.metric("Total Vendas", formatar_real(total_vendas_soma))
-                    with col2_total:
-                        st.metric("Total Metas", formatar_real(total_metas_soma))
-                    with col3_total:
-                        st.metric("Alcance Geral", formatar_porcentagem(alcance_soma))
-                    
-                    # Gráfico modo soma completa
-                    periodo_completo_label = f"{periodo1_label} até {periodo2_label}"
-                    fig_soma_completa = criar_grafico_vendas_soma(df_soma_completa, periodo_completo_label)
-                    st.plotly_chart(fig_soma_completa, use_container_width=True)
                 else:
-                    st.warning("⚠️ Nenhum dado encontrado para o período selecionado.")
-                
+                    # Modo soma original (um único período)
+                    st.info(f"📊 **Modo Soma**: Somando todos os meses de {periodo1_label} até {periodo2_label} por ponto de venda")
+                    
+                    # Processamento do período completo
+                    df_soma_completa = processar_soma_periodo_completo(df_base, ano_p1, mes_p1_selected, ano_p2, mes_p2_selected, pontos_selecionados)
+                    
+                    if not df_soma_completa.empty:
+                        st.subheader(f"🔄 Soma Completa do Período ({periodo1_label} até {periodo2_label})")
+                        
+                        # Tabela da soma completa
+                        col_tabela, col_botoes = st.columns([3, 1])
+                        with col_tabela:
+                            df_soma_display = df_soma_completa[['Ponto de Venda', 'Venda_Formatada', 'Metas_Formatada', 'Alcance_Formatado', 'Meta Batida']].copy()
+                            df_soma_display.columns = ['Ponto de Venda', 'Vendas Totais', 'Metas Totais', 'Alcance', 'Status']
+                            st.dataframe(df_soma_display, use_container_width=True)
+                        
+                        with col_botoes:
+                            botao_download_pdf_tabela(df_soma_display, f"Soma Completa - {periodo1_label} até {periodo2_label}", f"soma_completa_{ano_p1}{mes_p1_selected}_{ano_p2}{mes_p2_selected}")
+                            botao_download_csv_tabela(df_soma_display, f"soma_completa_{ano_p1}{mes_p1_selected}_{ano_p2}{mes_p2_selected}")
+                        
+                        # Totais da soma completa
+                        total_vendas_soma = df_soma_completa['Venda'].sum()
+                        total_metas_soma = df_soma_completa['Metas'].sum()
+                        alcance_soma = (total_vendas_soma / total_metas_soma * 100) if total_metas_soma > 0 else 0
+                        
+                        col1_total, col2_total, col3_total = st.columns(3)
+                        with col1_total:
+                            st.metric("Total Vendas", formatar_real(total_vendas_soma))
+                        with col2_total:
+                            st.metric("Total Metas", formatar_real(total_metas_soma))
+                        with col3_total:
+                            st.metric("Alcance Geral", formatar_porcentagem(alcance_soma))
+                        
+                        # Gráfico modo soma completa
+                        periodo_completo_label = f"{periodo1_label} até {periodo2_label}"
+                        fig_soma_completa = criar_grafico_vendas_soma(df_soma_completa, periodo_completo_label)
+                        st.plotly_chart(fig_soma_completa, use_container_width=True)
+                    else:
+                        st.warning("⚠️ Nenhum dado encontrado para o período selecionado.")
+            
             else:
+                # Modo comparação original (sem alterações)
                 st.info("📈 **Modo Comparação**: Comparando período 1 vs período 2 individualmente")
                 
                 # Processamento dos dados de vendas
@@ -859,6 +1093,7 @@ def main():
                     col_comp, col_botoes_comp = st.columns([3, 1])
                     with col_comp:
                         df_comp_display = comparativo[['Ponto de Venda', 'Venda_p1', 'Venda_p2', 'Variação_Formatada']].copy()
+                        # Correção: Removida linha duplicada de formatação
                         df_comp_display['Venda_p1'] = df_comp_display['Venda_p1'].apply(formatar_real)
                         df_comp_display['Venda_p2'] = df_comp_display['Venda_p2'].apply(formatar_real)
                         df_comp_display.columns = ['Ponto de Venda', periodo1_label, periodo2_label, 'Variação']
@@ -896,7 +1131,7 @@ def main():
                     
                     col_pdf, col_csv = st.columns(2)
                     with col_pdf:
-                                                botao_download_pdf_tabela(df_display, f"Metas - {periodo1_label}", f"metas_{ano_p1}{mes_p1_selected}")
+                        botao_download_pdf_tabela(df_display, f"Metas - {periodo1_label}", f"metas_{ano_p1}{mes_p1_selected}")
                     with col_csv:
                         botao_download_csv_tabela(df_display, f"metas_{ano_p1}{mes_p1_selected}")
                 
